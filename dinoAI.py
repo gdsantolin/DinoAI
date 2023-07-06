@@ -1,14 +1,16 @@
+import pandas as pd
 import pygame
 import os
 import random
 import time
 from sys import exit
+from neural import DinoClassifier
 
 pygame.init()
 
 # Valid values: HUMAN_MODE or AI_MODE
 GAME_MODE = "AI_MODE"
-RENDER_GAME = True
+RENDER_GAME = False
 
 # Global Constants
 SCREEN_HEIGHT = 600
@@ -253,7 +255,7 @@ def playerKeySelector():
 def playGame():
     global game_speed, x_pos_bg, y_pos_bg, points, obstacles
     run = True
-
+    logs = []
     clock = pygame.time.Clock()
     cloud = Cloud()
     font = pygame.font.Font('freesansbold.ttf', 20)
@@ -320,9 +322,15 @@ def playGame():
 
         if GAME_MODE == "HUMAN_MODE":
             userInput = playerKeySelector()
+            # FAZ LOG, PARA CRIAR DATASET
+            if userInput != "K_NO":
+                logs.append((userInput, distance, obHeight, game_speed, obType, nextObDistance, nextObHeight, nextObType))
+            
+
         else:
             userInput = aiPlayer.keySelector(distance, obHeight, game_speed, obType, nextObDistance, nextObHeight,
                                              nextObType)
+        
 
         if len(obstacles) == 0 or obstacles[-1].getXY()[0] < spawn_dist:
             spawn_dist = random.randint(0, 670)
@@ -359,6 +367,13 @@ def playGame():
         for obstacle in obstacles:
             if player.dino_rect.colliderect(obstacle.rect):
                 if RENDER_GAME:
+                    #write logs to file, append
+                    with open('logs.csv', 'a') as f:
+                        for log in logs:
+                            #turn tuple into string, separated by comma
+                            log = ','.join(str(x) for x in log)
+                            f.write(log)
+                            f.write('\n')
                     pygame.time.delay(2000)
                 death_count += 1
                 return points
@@ -390,24 +405,6 @@ def generate_neighborhood(state):
     return neighborhood
 
 
-# Gradiente Ascent
-def gradient_ascent(state, max_time):
-    start = time.process_time()
-    res, max_value = manyPlaysResults(3)
-    better = True
-    end = 0
-    while better and end - start <= max_time:
-        neighborhood = generate_neighborhood(state)
-        better = False
-        for s in neighborhood:
-            aiPlayer = KeySimplestClassifier(s)
-            res, value = manyPlaysResults(3)
-            if value > max_value:
-                state = s
-                max_value = value
-                better = True
-        end = time.process_time()
-    return state, max_value
 
 
 from scipy import stats
@@ -421,17 +418,170 @@ def manyPlaysResults(rounds):
     npResults = np.asarray(results)
     return (results, npResults.mean() - npResults.std())
 
+# crossover that generates two children, using random crossover point
+def crossover(dino1, dino2):
+    child1 = []
+    child2 = []
 
+    weight1 = dino1.get_weights()
+    weight2 = dino2.get_weights()
+    crossover_point = random.randint(0, len(weight1))
+    for i in range(len(weight1)):
+        child1.append([])
+        child2.append([])
+        for j in range(len(weight1[i])):
+            if i < crossover_point:
+                child1[i].append(weight1[i][j])
+                child2[i].append(weight2[i][j])
+            else:
+                child1[i].append(weight2[i][j])
+                child2[i].append(weight1[i][j])
+    return child1, child2
+# mutation that changes a random gene to a random value
+def mutation(weight,mutation_rate):
+    for i in range(len(weight)):
+        for j in range(len(weight[i])):
+            if random.random() < mutation_rate:
+                weight[i][j] = weight[i][j] * random.uniform(0.5, 1.5)
+
+    return weight
+
+# select k individuals from the population that have the best fitness
+def selection(population, scores, k=5):
+    selection_ids = [ ]
+    for i in range(k):
+        selection_ids.append(np.argmax(scores))
+        scores[np.argmax(scores)] = -99999999999
+
+    new_population = []
+    for i in selection_ids:
+        new_population.append(population[i])
+    return new_population
+
+def enumerateObType(obType):
+        if "SmallCactus" in obType:
+            return 10
+        elif "LargeCactus" in obType:
+            return 200
+        elif "Bird" in obType:
+            return 3000
+        else:
+            return 10
+
+def enumerateY(y):
+    if y == "K_UP":
+        return 1
+    else:
+        return 0
+
+def dino_train(n_rounds, n_players):
+    global aiPlayer
+    global top_score
+    global dinos
+
+
+    #load player data from csv as a numpy array
+    player_data = pd.read_csv('logs.csv', header=None)
+    # y is the first column, x is the rest
+    y = player_data.iloc[:,0]
+    X = player_data.iloc[:,1:]
+    #convert colum 3 and 6 using enumerateObType
+    X[4] = X[4].apply(enumerateObType)
+    X[7] = X[7].apply(enumerateObType)
+
+    #convert colum 0 using enumerateY
+    y = y.apply(enumerateY)
+
+
+    
+
+
+    
+    if(len(dinos) == 0):
+        # primeiro round, vmaos treinar todos os dinossauros com valores de jogares reais
+        # epochs: numero de vezes que o modelo vai ver o dataset
+        # lr: learning rate, quanto maior mais rapido o modelo aprende, mas pode nao convergir
+        for p in range(n_players):
+            aiPlayer = DinoClassifier()
+            aiPlayer.fit(X,y,epochs=10,lr=0.01)
+            dinos.append(aiPlayer)          
+            res, value = manyPlaysResults(n_rounds)
+            best_player = aiPlayer       
+            if value > top_score:
+                top_score = value
+                best_player = aiPlayer
+        print("Melhor jogador: ", best_player)
+        for dino in dinos: 
+            dino.fit(best_player.inputs,best_player.outputs,epochs=10,lr=0.01)
+
+    new_players = []
+    # Aplicar aqui a heuristica de genetico
+    for p in range(n_players):
+        # escolher dois pais aleatoriamente
+        parent1 = random.choice(dinos)
+        parent2 = random.choice(dinos)
+        # fazer crossover
+        child1, child2 = crossover(parent1, parent2)
+        # fazer mutacao
+        child1 = mutation(child1,0.1)
+        child2 = mutation(child2,0.1)
+        # criar dois novos jogadores com os pesos dos filhos
+        new_players.append(DinoClassifier(child1))
+        new_players.append(DinoClassifier(child2))
+    
+
+    
+    best_player = new_players[0]
+    scores = []
+    for i in range(len(new_players)):
+        aiPlayer = new_players[i]
+        value, res = manyPlaysResults(n_rounds) 
+        mean_value = np.mean(value)
+        scores.append(mean_value)
+        
+        print("player ", i, " score: ", mean_value)
+        if mean_value > top_score:
+            top_score = mean_value
+            best_player = new_players[i]
+
+    # Seleciona os K melhores jogadores
+    dinos = selection(new_players, scores, k=5)
+
+    # Treina so os melhores jogadores
+    for dino in dinos:
+        dino.fit(best_player.inputs,best_player.outputs,epochs=10,lr=0.01)
+    print("top score: ", top_score)
+
+    if top_score > 1000:
+       # Faz algo com o melhor jogador
+        print("top score: ", top_score)
+        return
+
+    # Chama recursivamente, coloca aqui um criterio de parada 
+    dino_train(n_rounds, n_players)
+
+
+
+    
+    
+        
 def main():
     global aiPlayer
+    global dinos
+    global top_score
 
-    initial_state = [(15, 250), (18, 350), (20, 450), (1000, 550)]
-    aiPlayer = KeySimplestClassifier(initial_state)
-    best_state, best_value = gradient_ascent(initial_state, 5000)
-    aiPlayer = KeySimplestClassifier(best_state)
-    res, value = manyPlaysResults(30)
-    npRes = np.asarray(res)
-    print(res, npRes.mean(), npRes.std(), value)
+    dinos = []
+    top_score = 0
+    dino_train(5, 5)
+
+
+    # initial_state = [(15, 250), (18, 350), (20, 450), (1000, 550)]
+    # aiPlayer = KeySimplestClassifier(initial_state)
+    # best_state, best_value = gradient_ascent(initial_state, 5000)
+    # aiPlayer = KeySimplestClassifier(best_state)
+    # res, value = manyPlaysResults(30)
+    # npRes = np.asarray(res)
+    # print(res, npRes.mean(), npRes.std(), value)
 
 
 main()

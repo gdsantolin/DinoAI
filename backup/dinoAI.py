@@ -3,13 +3,6 @@ import os
 import random
 import time
 from sys import exit
-from neural import DinoClassifier
-
-
-from scipy import stats
-import numpy as np
-
-dinos = []
 
 pygame.init()
 
@@ -68,7 +61,6 @@ class Dinosaur:
         self.dino_rect = self.image.get_rect()
         self.dino_rect.x = self.X_POS
         self.dino_rect.y = self.Y_POS
-        self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
     def update(self, userInput):
         if self.dino_duck and not self.dino_jump:
@@ -127,9 +119,6 @@ class Dinosaur:
 
     def draw(self, SCREEN):
         SCREEN.blit(self.image, (self.dino_rect.x, self.dino_rect.y))
-        pygame.draw.rect(SCREEN, self.color,
-                         (self.dino_rect.x, self.dino_rect.y, self.dino_rect.width, self.dino_rect.height), 2)
-
 
     def getXY(self):
         return (self.dino_rect.x, self.dino_rect.y)
@@ -261,7 +250,7 @@ def playerKeySelector():
         return "K_NO"
 
 
-def playGame(solutions):
+def playGame():
     global game_speed, x_pos_bg, y_pos_bg, points, obstacles
     run = True
 
@@ -269,11 +258,7 @@ def playGame(solutions):
     cloud = Cloud()
     font = pygame.font.Font('freesansbold.ttf', 20)
 
-    players = []
-    players_classifier = []
-    solution_fitness = []
-    died = []
-
+    player = Dinosaur()
     game_speed = 10
     x_pos_bg = 0
     y_pos_bg = 383
@@ -282,12 +267,6 @@ def playGame(solutions):
     obstacles = []
     death_count = 0
     spawn_dist = 0
-
-    for solution in solutions:
-        players.append(Dinosaur())
-        players_classifier.append(KeySimplestClassifier(solution))
-        solution_fitness.append(0)
-        died.append(False)
 
     def score():
         global points, game_speed
@@ -312,14 +291,7 @@ def playGame(solutions):
             x_pos_bg = 0
         x_pos_bg -= game_speed
 
-    def statistics():
-        text_1 = font.render(f'Dinosaurs Alive:  {str(died.count(False))}', True, (0, 0, 0))
-        text_3 = font.render(f'Game Speed:  {str(game_speed)}', True, (0, 0, 0))
-
-        SCREEN.blit(text_1, (50, 450))
-        SCREEN.blit(text_3, (50, 480))
-
-    while run and (False in died):
+    while run:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
@@ -328,32 +300,29 @@ def playGame(solutions):
         if RENDER_GAME:
             SCREEN.fill((255, 255, 255))
 
-        for i,player in enumerate(players):
-            if not died[i]:
-                distance = 1500
-                nextObDistance = 2000
-                obHeight = 0
-                nextObHeight = 0
-                obType = 2
-                nextObType = 2
-                if len(obstacles) != 0:
-                    xy = obstacles[0].getXY()
-                    distance = xy[0]
-                    obHeight = obstacles[0].getHeight()
-                    obType = obstacles[0]
+        distance = 1500
+        nextObDistance = 2000
+        obHeight = 0
+        nextObHeight = 0
+        obType = 2
+        nextObType = 2
+        if len(obstacles) != 0:
+            xy = obstacles[0].getXY()
+            distance = xy[0]
+            obHeight = obstacles[0].getHeight()
+            obType = obstacles[0]
 
-                if len(obstacles) == 2:
-                    nextxy = obstacles[1].getXY()
-                    nextObDistance = nextxy[0]
-                    nextObHeight = obstacles[1].getHeight()
-                    nextObType = obstacles[1]
+        if len(obstacles) == 2:
+            nextxy = obstacles[1].getXY()
+            nextObDistance = nextxy[0]
+            nextObHeight = obstacles[1].getHeight()
+            nextObType = obstacles[1]
 
-                userInput = players_classifier[i].keySelector(distance, obHeight, game_speed, obType, nextObDistance, nextObHeight,nextObType)
-
-                player.update(userInput)
-
-                if RENDER_GAME:
-                    player.draw(SCREEN)
+        if GAME_MODE == "HUMAN_MODE":
+            userInput = playerKeySelector()
+        else:
+            userInput = aiPlayer.keySelector(distance, obHeight, game_speed, obType, nextObDistance, nextObHeight,
+                                             nextObType)
 
         if len(obstacles) == 0 or obstacles[-1].getXY()[0] < spawn_dist:
             spawn_dist = random.randint(0, 670)
@@ -364,6 +333,11 @@ def playGame(solutions):
             elif random.randint(0, 5) == 5:
                 obstacles.append(Bird(BIRD))
 
+        player.update(userInput)
+
+        if RENDER_GAME:
+            player.draw(SCREEN)
+
         for obstacle in list(obstacles):
             obstacle.update()
             if RENDER_GAME:
@@ -372,7 +346,6 @@ def playGame(solutions):
 
         if RENDER_GAME:
             background()
-            statistics()
             cloud.draw(SCREEN)
 
         cloud.update()
@@ -384,12 +357,11 @@ def playGame(solutions):
             pygame.display.update()
 
         for obstacle in obstacles:
-            for i, player in enumerate(players):
-                if player.dino_rect.colliderect(obstacle.rect) and died[i] == False:
-                    solution_fitness[i] = points
-                    died[i] = True
-
-    return solution_fitness
+            if player.dino_rect.colliderect(obstacle.rect):
+                if RENDER_GAME:
+                    pygame.time.delay(2000)
+                death_count += 1
+                return points
 
 
 # Change State Operator
@@ -418,55 +390,46 @@ def generate_neighborhood(state):
     return neighborhood
 
 
+# Gradiente Ascent
+def gradient_ascent(state, max_time):
+    start = time.process_time()
+    res, max_value = manyPlaysResults(3)
+    better = True
+    end = 0
+    while better and end - start <= max_time:
+        neighborhood = generate_neighborhood(state)
+        better = False
+        for s in neighborhood:
+            aiPlayer = KeySimplestClassifier(s)
+            res, value = manyPlaysResults(3)
+            if value > max_value:
+                state = s
+                max_value = value
+                better = True
+        end = time.process_time()
+    return state, max_value
 
-def manyPlaysResultsTrain(rounds,solutions):
+
+from scipy import stats
+import numpy as np
+
+
+def manyPlaysResults(rounds):
     results = []
-
     for round in range(rounds):
-        results += [playGame(solutions)]
-
-    npResults = np.asarray(results)
-
-    mean_results = np.mean(npResults,axis = 0) - np.std(npResults,axis=0) # axis 0 calcula media da coluna
-    return mean_results
-
-
-def manyPlaysResultsTest(rounds,best_solution):
-    results = []
-    for round in range(rounds):
-        results += [playGame([best_solution])[0]]
-
+        results += [playGame()]
     npResults = np.asarray(results)
     return (results, npResults.mean() - npResults.std())
 
 
-def dino_train(n_rounds, n_players):
-    global aiPlayer
-    global top_score
-    global dinos
-
-    # primeiro round, vmaos treinar todos os dinossauros com valores de pesos aleatorios
-
-    for p in range(n_players):
-        aiPlayer = DinoClassifier()
-        dinos.append(aiPlayer)            
-    
-    res, value = manyPlaysResultsTrain(n_rounds, dinos)
-
-    
-    
-        
-
-        
-
-
 def main():
-    global dinos 
-    dinos = []
+    global aiPlayer
 
     initial_state = [(15, 250), (18, 350), (20, 450), (1000, 550)]
+    aiPlayer = KeySimplestClassifier(initial_state)
     best_state, best_value = gradient_ascent(initial_state, 5000)
-    res, value = manyPlaysResultsTest(30, best_state)
+    aiPlayer = KeySimplestClassifier(best_state)
+    res, value = manyPlaysResults(30)
     npRes = np.asarray(res)
     print(res, npRes.mean(), npRes.std(), value)
 

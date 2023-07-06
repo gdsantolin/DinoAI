@@ -3,13 +3,6 @@ import os
 import random
 import time
 from sys import exit
-from neural import DinoClassifier
-
-
-from scipy import stats
-import numpy as np
-
-dinos = []
 
 pygame.init()
 
@@ -418,6 +411,37 @@ def generate_neighborhood(state):
     return neighborhood
 
 
+# Gradiente Ascent
+def gradient_ascent(state, max_time):
+    start = time.process_time()
+    res, max_value = manyPlaysResultsTest(3, state)
+    better = True
+    end = 0
+    while better and end - start <= max_time:
+        neighborhood = generate_neighborhood(state)
+        better = False
+
+        results = playGame(neighborhood)
+        for i,value in enumerate(results):
+            if value > max_value:
+                state = neighborhood[i]
+                max_value = value
+                better = True
+        '''
+        for s in neighborhood:
+            aiPlayer = KeySimplestClassifier(s)
+            res, value = manyPlaysResults(3)
+            if value > max_value:
+                state = s
+                max_value = value
+                better = True
+        '''
+        end = time.process_time()
+    return state, max_value
+
+
+from scipy import stats
+import numpy as np
 
 def manyPlaysResultsTrain(rounds,solutions):
     results = []
@@ -440,29 +464,7 @@ def manyPlaysResultsTest(rounds,best_solution):
     return (results, npResults.mean() - npResults.std())
 
 
-def dino_train(n_rounds, n_players):
-    global aiPlayer
-    global top_score
-    global dinos
-
-    # primeiro round, vmaos treinar todos os dinossauros com valores de pesos aleatorios
-
-    for p in range(n_players):
-        aiPlayer = DinoClassifier()
-        dinos.append(aiPlayer)            
-    
-    res, value = manyPlaysResultsTrain(n_rounds, dinos)
-
-    
-    
-        
-
-        
-
-
 def main():
-    global dinos 
-    dinos = []
 
     initial_state = [(15, 250), (18, 350), (20, 450), (1000, 550)]
     best_state, best_value = gradient_ascent(initial_state, 5000)
