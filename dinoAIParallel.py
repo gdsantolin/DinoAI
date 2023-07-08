@@ -2,20 +2,22 @@ import pygame
 import os
 import random
 import time
+
+import pandas as pd
+
+from tqdm import tqdm
 from sys import exit
-from neural import DinoClassifier
-
-
-from scipy import stats
-import numpy as np
-
-dinos = []
+from NeuralNetwork import DinoClassifier
 
 pygame.init()
 
 # Valid values: HUMAN_MODE or AI_MODE
 GAME_MODE = "AI_MODE"
-RENDER_GAME = True
+RENDER_GAME = False
+
+MULTI_PLAYER = 5
+K_SELECTED = 0.1
+DINOS_N = 5000
 
 # Global Constants
 SCREEN_HEIGHT = 600
@@ -229,25 +231,25 @@ def first(x):
     return x[0]
 
 
-class KeySimplestClassifier(KeyClassifier):
-    def __init__(self, state):
-        self.state = state
+# class KeySimplestClassifier(KeyClassifier):
+#     def __init__(self, state):
+#         self.state = state
 
-    def keySelector(self, distance, obHeight, speed, obType, nextObDistance, nextObHeight,nextObType):
-        self.state = sorted(self.state, key=first)
-        for s, d in self.state:
-            if speed < s:
-                limDist = d
-                break
-        if distance <= limDist:
-            if isinstance(obType, Bird) and obHeight > 50:
-                return "K_DOWN"
-            else:
-                return "K_UP"
-        return "K_NO"
+#     def keySelector(self, distance, obHeight, speed, obType, nextObDistance, nextObHeight,nextObType):
+#         self.state = sorted(self.state, key=first)
+#         for s, d in self.state:
+#             if speed < s:
+#                 limDist = d
+#                 break
+#         if distance <= limDist:
+#             if isinstance(obType, Bird) and obHeight > 50:
+#                 return "K_DOWN"
+#             else:
+#                 return "K_UP"
+#         return "K_NO"
 
-    def updateState(self, state):
-        self.state = state
+#     def updateState(self, state):
+#         self.state = state
 
 
 def playerKeySelector():
@@ -285,7 +287,7 @@ def playGame(solutions):
 
     for solution in solutions:
         players.append(Dinosaur())
-        players_classifier.append(KeySimplestClassifier(solution))
+        players_classifier.append(DinoClassifier(solution))
         solution_fitness.append(0)
         died.append(False)
 
@@ -418,6 +420,149 @@ def generate_neighborhood(state):
     return neighborhood
 
 
+def enumerateObType(obType):
+        if "SmallCactus" in obType:
+            return 10
+        elif "LargeCactus" in obType:
+            return 200
+        elif "Bird" in obType:
+            return 3000
+        else:
+            return 10
+
+def enumerateY(y):
+    if y == "K_UP":
+        return 1
+    else:
+        return 0
+    
+
+def crossover(dino1, dino2):
+    child1 = []
+    child2 = []
+
+    weight1 = dino1.get_weights()
+    weight2 = dino2.get_weights()
+    crossover_point = random.randint(0, len(weight1))
+    for i in range(len(weight1)):
+        child1.append([])
+        child2.append([])
+        for j in range(len(weight1[i])):
+            if i < crossover_point:
+                child1[i].append(weight1[i][j])
+                child2[i].append(weight2[i][j])
+            else:
+                child1[i].append(weight2[i][j])
+                child2[i].append(weight1[i][j])
+    return child1, child2
+
+# mutation that changes a random gene to a random value
+def mutation(weight,mutation_rate):
+    for i in range(len(weight)):
+        for j in range(len(weight[i])):
+            if random.random() < mutation_rate:
+                weight[i][j] = weight[i][j] * random.uniform(0.5, 1.5)
+
+    return weight
+
+# select k individuals from the population that have the best fitness
+def selection(population, scores, k=0.5):
+    selection_ids = [ ]
+    #reduce the population to the k best individuals, k is the percentage
+    best_scores = [ ]
+    new_population = []
+
+    for i in range(int(len(population) * k)):
+        new_population.append(population[np.argmax(scores)])
+        best_scores.append(scores[i])
+        scores[np.argmax(scores)] = -1
+
+
+       
+    return new_population, best_scores
+
+
+def roulette(population, scores): 
+    # calculate the total sum of scores 
+    total = sum(scores) 
+    # generate a random number between 0 and total 
+    r = random.uniform(0, total) # initialize a cumulative sum 
+    cumsum = 0 # loop through the population and scores 
+    for i in range(len(population)): 
+        # add the score to the cumulative sum 
+        cumsum += scores[i] 
+        # if the cumulative sum is greater than or equal to r, 
+        # return the corresponding parent 
+        if cumsum >= r: 
+            return population[i]
+# Gradiente Ascent
+def dino_train(n_rounds, n_players, dinos):
+    global aiPlayer
+    global top_score
+
+    
+   
+    population = [ DinoClassifier() for _ in range(n_players)]
+
+    weights = [dino.get_weights() for dino in population]
+    mutation_rate = 0.8
+    num_generations = 1000
+
+    for generation in range(num_generations):
+        # evaluate the fitness of each dino
+        scores = manyPlaysResultsTrain(3, weights)
+
+        # select the best k dinos
+        best_dinos, best_scores = selection(population, scores, k=K_SELECTED)
+
+
+
+        new_population = []
+
+        # roulete selection
+        for _ in range(n_players - len(best_dinos)):
+            parent1 = roulette(population, scores)
+            parent2 = roulette(population, scores)
+
+            child1, child2 = crossover(parent1, parent2)
+
+            child1 = mutation(child1, mutation_rate)
+            child2 = mutation(child2, mutation_rate)
+
+            new_population.append(DinoClassifier(child1))
+            new_population.append(DinoClassifier(child2))
+        
+        # add best_dinos to new_population
+        new_population += best_dinos
+        
+        population = new_population
+
+      
+        print("Generation %d: max score = %.2f" % (generation + 1, max(scores)))
+
+        # get max score id 
+        max_score_id = np.argmax(scores)
+        if max(scores) > top_score:
+            top_score = max(scores)
+            aiPlayer = population[max_score_id]
+            print("top score: ", top_score)
+            # save weights
+            population[max_score_id].save_weights("best_ai.h5")
+            
+
+
+    if top_score > 1000:
+       # Faz algo com o melhor jogador
+        print("top score: ", top_score)
+        # save weights
+        population[0]
+        return
+
+    # Chama recursivamente, coloca aqui um criterio de parada 
+    dino_train(n_rounds, n_players, dinos)
+
+from scipy import stats
+import numpy as np
 
 def manyPlaysResultsTrain(rounds,solutions):
     results = []
@@ -440,35 +585,12 @@ def manyPlaysResultsTest(rounds,best_solution):
     return (results, npResults.mean() - npResults.std())
 
 
-def dino_train(n_rounds, n_players):
-    global aiPlayer
-    global top_score
-    global dinos
-
-    # primeiro round, vmaos treinar todos os dinossauros com valores de pesos aleatorios
-
-    for p in range(n_players):
-        aiPlayer = DinoClassifier()
-        dinos.append(aiPlayer)            
-    
-    res, value = manyPlaysResultsTrain(n_rounds, dinos)
-
-    
-    
-        
-
-        
-
-
 def main():
     global dinos 
+    global top_score
+
     dinos = []
-
-    initial_state = [(15, 250), (18, 350), (20, 450), (1000, 550)]
-    best_state, best_value = gradient_ascent(initial_state, 5000)
-    res, value = manyPlaysResultsTest(30, best_state)
-    npRes = np.asarray(res)
-    print(res, npRes.mean(), npRes.std(), value)
-
+    top_score = 0
+    dino_train(5, 30, dinos)
 
 main()
